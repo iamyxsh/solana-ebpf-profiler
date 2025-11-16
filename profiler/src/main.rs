@@ -1,3 +1,4 @@
+use aya::programs::UProbe;
 use tokio::signal;
 
 #[tokio::main]
@@ -11,13 +12,19 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("failed to increase RLIMIT_MEMLOCK: {ret}");
     }
 
-    let _ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
+    let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
         "/profiler"
     )))?;
 
-    println!("eBPF program loaded");
+    let program: &mut UProbe = ebpf.program_mut("uprobe_readline").unwrap().try_into()?;
+    program.load()?;
+    program.attach("readline", "/bin/bash", None::<u32>)?;
+
+    println!("uprobe attached to /bin/bash:readline");
+    println!("run: sudo cat /sys/kernel/debug/tracing/trace_pipe");
     signal::ctrl_c().await?;
+    println!("detaching...");
 
     Ok(())
 }
