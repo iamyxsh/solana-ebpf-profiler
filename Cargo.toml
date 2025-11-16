@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "profiler",
+    "profiler-ebpf",
+]
+default-members = ["profiler"]
+
+[workspace.package]
+authors = ["Yash Sharma <iamyxsh@icloud.com>"]
+license = "MIT"
+edition = "2024"
+
+[workspace.dependencies]
+aya = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+anyhow = { version = "1", default-features = false }
+cargo_metadata = { version = "0.23.0", default-features = false }
+libc = { version = "0.2", default-features = false }
+tokio = { version = "1.40.0", default-features = false }
+which = { version = "6.0.0", default-features = false }
+
+[profile.release.package.profiler-ebpf]
+debug = 2
+codegen-units = 1
