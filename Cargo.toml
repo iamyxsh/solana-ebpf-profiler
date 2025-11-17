@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "profiler",
+    "profiler-common",
     "profiler-ebpf",
 ]
 default-members = ["profiler"]

@@ -1,4 +1,7 @@
+use aya::maps::RingBuf;
 use aya::programs::UProbe;
+use profiler_common::Event;
+use tokio::io::unix::AsyncFd;
 use tokio::signal;
 
 #[tokio::main]
@@ -21,10 +24,30 @@ async fn main() -> anyhow::Result<()> {
     program.load()?;
     program.attach("readline", "/bin/bash", None::<u32>)?;
 
-    println!("uprobe attached to /bin/bash:readline");
-    println!("run: sudo cat /sys/kernel/debug/tracing/trace_pipe");
-    signal::ctrl_c().await?;
-    println!("detaching...");
+    let ring_buf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap())?;
+    let mut async_fd = AsyncFd::new(ring_buf)?;
+
+    println!("uprobe attached, polling ring buffer...");
+
+    loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                println!("detaching...");
+                break;
+            }
+            guard = async_fd.readable_mut() => {
+                let mut guard = guard?;
+                let rb: &mut RingBuf<_> = guard.get_inner_mut();
+                while let Some(item) = rb.next() {
+                    if item.len() >= core::mem::size_of::<Event>() {
+                        let event = unsafe { &*(item.as_ptr() as *const Event) };
+                        println!("uprobe hit: pid={}", event.pid);
+                    }
+                }
+                guard.clear_ready();
+            }
+        }
+    }
 
     Ok(())
 }

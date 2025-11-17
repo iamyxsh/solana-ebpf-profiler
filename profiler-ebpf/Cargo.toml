@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 aya-ebpf = { workspace = true }
+profiler-common = { path = "../profiler-common", default-features = false }
 
 [build-dependencies]
 which = { workspace = true }
