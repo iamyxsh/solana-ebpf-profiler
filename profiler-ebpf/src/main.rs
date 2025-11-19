@@ -2,20 +2,25 @@
 #![no_main]
 
 use aya_ebpf::helpers::bpf_get_current_pid_tgid;
-use aya_ebpf::macros::{map, uprobe};
+use aya_ebpf::macros::{map, perf_event};
 use aya_ebpf::maps::RingBuf;
-use aya_ebpf::programs::ProbeContext;
+use aya_ebpf::programs::PerfEventContext;
+use aya_ebpf::EbpfContext;
 use profiler_common::Event;
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
-#[uprobe]
-pub fn uprobe_readline(_ctx: ProbeContext) {
-    let pid = (unsafe { bpf_get_current_pid_tgid() } >> 32) as u32;
+#[perf_event]
+pub fn profile_cpu(ctx: PerfEventContext) {
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let cycles = unsafe { (*ctx.as_ptr().cast::<aya_ebpf::bindings::bpf_perf_event_data>()).sample_period };
     if let Some(mut entry) = EVENTS.reserve::<Event>(0) {
         let ptr = entry.as_mut_ptr();
-        unsafe { (*ptr).pid = pid };
+        unsafe {
+            (*ptr).pid = pid;
+            (*ptr).cpu_cycles = cycles;
+        };
         entry.submit(0);
     }
 }

@@ -1,5 +1,7 @@
 use aya::maps::RingBuf;
-use aya::programs::UProbe;
+use aya::programs::perf_event::{
+    PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
+};
 use profiler_common::Event;
 use tokio::io::unix::AsyncFd;
 use tokio::signal;
@@ -20,14 +22,23 @@ async fn main() -> anyhow::Result<()> {
         "/profiler"
     )))?;
 
-    let program: &mut UProbe = ebpf.program_mut("uprobe_readline").unwrap().try_into()?;
+    let program: &mut PerfEvent = ebpf.program_mut("profile_cpu").unwrap().try_into()?;
     program.load()?;
-    program.attach("readline", "/bin/bash", None::<u32>)?;
+
+    let cpus = aya::util::online_cpus().map_err(|(_, e)| e)?;
+    for cpu in &cpus {
+        program.attach(
+            PerfEventConfig::Software(SoftwareEvent::CpuClock),
+            PerfEventScope::AllProcessesOneCpu { cpu: *cpu },
+            SamplePolicy::Period(100_000),
+            true,
+        )?;
+    }
 
     let ring_buf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap())?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
-    println!("uprobe attached, polling ring buffer...");
+    println!("sampling CPU cycles on {} cores...", cpus.len());
 
     loop {
         tokio::select! {
@@ -41,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
                 while let Some(item) = rb.next() {
                     if item.len() >= core::mem::size_of::<Event>() {
                         let event = unsafe { &*(item.as_ptr() as *const Event) };
-                        println!("uprobe hit: pid={}", event.pid);
+                        println!("pid={} cycles={}", event.pid, event.cpu_cycles);
                     }
                 }
                 guard.clear_ready();
