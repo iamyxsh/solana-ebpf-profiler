@@ -1,4 +1,4 @@
-use aya::maps::RingBuf;
+use aya::maps::{RingBuf, StackTraceMap};
 use aya::programs::perf_event::{
     PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
 };
@@ -35,7 +35,8 @@ async fn main() -> anyhow::Result<()> {
         )?;
     }
 
-    let ring_buf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap())?;
+    let stacks = StackTraceMap::try_from(ebpf.take_map("STACKS").unwrap())?;
+    let ring_buf = RingBuf::try_from(ebpf.take_map("EVENTS").unwrap())?;
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
     println!("sampling CPU cycles on {} cores...", cpus.len());
@@ -52,7 +53,19 @@ async fn main() -> anyhow::Result<()> {
                 while let Some(item) = rb.next() {
                     if item.len() >= core::mem::size_of::<Event>() {
                         let event = unsafe { &*(item.as_ptr() as *const Event) };
-                        println!("pid={} cycles={}", event.pid, event.cpu_cycles);
+                        if event.stack_id >= 0 {
+                            if let Ok(trace) = stacks.get(&(event.stack_id as u32), 0) {
+                                let addrs: Vec<u64> = trace.frames()
+                                    .iter()
+                                    .take_while(|f| f.ip != 0)
+                                    .map(|f| f.ip)
+                                    .collect();
+                                println!(
+                                    "pid={} cycles={} stack={:x?}",
+                                    event.pid, event.cpu_cycles, addrs
+                                );
+                            }
+                        }
                     }
                 }
                 guard.clear_ready();
