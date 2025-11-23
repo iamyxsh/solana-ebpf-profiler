@@ -306,6 +306,7 @@ dependencies = [
  "aya-build",
  "cargo_metadata",
  "libc",
+ "object",
  "profiler-common",
  "profiler-ebpf",
  "tokio",

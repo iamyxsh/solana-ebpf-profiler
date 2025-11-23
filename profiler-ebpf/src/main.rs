@@ -20,7 +20,9 @@ pub fn profile_cpu(ctx: PerfEventContext) {
     let cycles = unsafe {
         (*ctx.as_ptr().cast::<aya_ebpf::bindings::bpf_perf_event_data>()).sample_period
     };
-    let stack_id = unsafe { bpf_get_stackid(ctx.as_ptr(), &STACKS as *const _ as *mut _, 0) };
+    let stack_id = unsafe {
+        bpf_get_stackid(ctx.as_ptr(), &STACKS as *const _ as *mut _, aya_ebpf::bindings::BPF_F_USER_STACK as u64)
+    };
 
     if let Some(mut entry) = EVENTS.reserve::<Event>(0) {
         let ptr = entry.as_mut_ptr();

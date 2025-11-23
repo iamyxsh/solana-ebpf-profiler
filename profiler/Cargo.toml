@@ -9,6 +9,7 @@ license.workspace = true
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
 libc = { workspace = true }
+object = { workspace = true }
 profiler-common = { path = "../profiler-common" }
 tokio = { workspace = true, features = [
     "io-util",
