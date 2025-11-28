@@ -1,4 +1,4 @@
-use aya::maps::{RingBuf, StackTraceMap};
+use aya::maps::{Array, RingBuf, StackTraceMap};
 use aya::programs::perf_event::{
     PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
 };
@@ -91,10 +91,19 @@ fn resolve_addr(
     format!("0x{addr:x}")
 }
 
+fn get_arg(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .map(|i| args[i + 1].clone())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let binary = args.iter().position(|a| a == "--binary").map(|i| &args[i + 1]);
+    let binary = get_arg(&args, "--binary");
+    let target_pid: u32 = get_arg(&args, "--pid")
+        .map(|s| s.parse().expect("--pid must be a number"))
+        .unwrap_or(0);
 
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
@@ -109,6 +118,10 @@ async fn main() -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/profiler"
     )))?;
+
+    let mut pid_map: Array<_, u32> =
+        Array::try_from(ebpf.map_mut("TARGET_PID").unwrap())?;
+    pid_map.set(0, target_pid, 0)?;
 
     let program: &mut PerfEvent = ebpf.program_mut("profile_cpu").unwrap().try_into()?;
     program.load()?;
@@ -128,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
     let mut async_fd = AsyncFd::new(ring_buf)?;
 
     let mut resolvers: HashMap<String, SymbolResolver> = HashMap::new();
-    if let Some(bin_path) = binary {
+    if let Some(ref bin_path) = binary {
         match SymbolResolver::from_binary(bin_path) {
             Ok(r) => {
                 resolvers.insert(bin_path.to_string(), r);
@@ -139,7 +152,11 @@ async fn main() -> anyhow::Result<()> {
 
     let mut maps_cache: HashMap<u32, Vec<(u64, u64, u64, String)>> = HashMap::new();
 
-    println!("sampling CPU cycles on {} cores...", cpus.len());
+    if target_pid > 0 {
+        println!("profiling pid {} on {} cores...", target_pid, cpus.len());
+    } else {
+        println!("profiling all processes on {} cores...", cpus.len());
+    }
 
     loop {
         tokio::select! {

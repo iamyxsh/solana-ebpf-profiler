@@ -3,10 +3,13 @@
 
 use aya_ebpf::helpers::{bpf_get_current_pid_tgid, bpf_get_stackid};
 use aya_ebpf::macros::{map, perf_event};
-use aya_ebpf::maps::{RingBuf, StackTrace};
+use aya_ebpf::maps::{Array, RingBuf, StackTrace};
 use aya_ebpf::programs::PerfEventContext;
 use aya_ebpf::EbpfContext;
 use profiler_common::Event;
+
+#[map]
+static TARGET_PID: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
@@ -17,11 +20,22 @@ static STACKS: StackTrace = StackTrace::with_max_entries(8192, 0);
 #[perf_event]
 pub fn profile_cpu(ctx: PerfEventContext) {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+
+    if let Some(target) = TARGET_PID.get(0) {
+        if *target != 0 && *target != pid {
+            return;
+        }
+    }
+
     let cycles = unsafe {
         (*ctx.as_ptr().cast::<aya_ebpf::bindings::bpf_perf_event_data>()).sample_period
     };
     let stack_id = unsafe {
-        bpf_get_stackid(ctx.as_ptr(), &STACKS as *const _ as *mut _, aya_ebpf::bindings::BPF_F_USER_STACK as u64)
+        bpf_get_stackid(
+            ctx.as_ptr(),
+            &STACKS as *const _ as *mut _,
+            aya_ebpf::bindings::BPF_F_USER_STACK as u64,
+        )
     };
 
     if let Some(mut entry) = EVENTS.reserve::<Event>(0) {
