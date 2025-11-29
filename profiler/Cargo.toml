@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
+inferno = { workspace = true }
 libc = { workspace = true }
 object = { workspace = true }
 profiler-common = { path = "../profiler-common" }

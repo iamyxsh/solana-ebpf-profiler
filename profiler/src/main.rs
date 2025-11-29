@@ -2,10 +2,12 @@ use aya::maps::{Array, RingBuf, StackTraceMap};
 use aya::programs::perf_event::{
     PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
 };
+use inferno::flamegraph;
 use object::{Object, ObjectSymbol, SymbolKind};
 use profiler_common::Event;
 use std::collections::HashMap;
 use std::fs;
+use std::io::BufWriter;
 use tokio::io::unix::AsyncFd;
 use tokio::signal;
 
@@ -104,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
     let target_pid: u32 = get_arg(&args, "--pid")
         .map(|s| s.parse().expect("--pid must be a number"))
         .unwrap_or(0);
+    let output = get_arg(&args, "--output").unwrap_or_else(|| "flamegraph.svg".to_string());
 
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
@@ -151,12 +154,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut maps_cache: HashMap<u32, Vec<(u64, u64, u64, String)>> = HashMap::new();
+    let mut folded: HashMap<String, u64> = HashMap::new();
+    let mut sample_count: u64 = 0;
 
     if target_pid > 0 {
         println!("profiling pid {} on {} cores...", target_pid, cpus.len());
     } else {
         println!("profiling all processes on {} cores...", cpus.len());
     }
+    println!("press Ctrl+C to stop and generate {}", output);
 
     loop {
         tokio::select! {
@@ -176,19 +182,22 @@ async fn main() -> anyhow::Result<()> {
                                     .entry(event.pid)
                                     .or_insert_with(|| parse_maps(event.pid));
 
-                                let names: Vec<String> = trace
+                                let frames: Vec<_> = trace
                                     .frames()
                                     .iter()
                                     .take_while(|f| f.ip != 0)
+                                    .collect();
+                                let names: Vec<String> = frames
+                                    .iter()
+                                    .rev()
                                     .map(|f| resolve_addr(f.ip, maps, &resolvers))
                                     .collect();
 
-                                println!(
-                                    "pid={} cycles={} stack={}",
-                                    event.pid,
-                                    event.cpu_cycles,
-                                    names.join(";")
-                                );
+                                if !names.is_empty() {
+                                    let stack_str = names.join(";");
+                                    *folded.entry(stack_str).or_insert(0) += event.cpu_cycles;
+                                    sample_count += 1;
+                                }
                             }
                         }
                     }
@@ -198,5 +207,29 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    println!("collected {} samples", sample_count);
+
+    if folded.is_empty() {
+        println!("no samples collected, skipping flame graph");
+        return Ok(());
+    }
+
+    let mut lines: Vec<String> = folded
+        .iter()
+        .map(|(stack, count)| format!("{} {}", stack, count))
+        .collect();
+    lines.sort();
+
+    let folded_text = lines.join("\n");
+    let reader = folded_text.as_bytes();
+
+    let f = fs::File::create(&output)?;
+    let writer = BufWriter::new(f);
+
+    let mut opts = flamegraph::Options::default();
+    opts.title = "solana-ebpf-profiler".to_string();
+    flamegraph::from_reader(&mut opts, reader, writer)?;
+
+    println!("wrote {}", output);
     Ok(())
 }
