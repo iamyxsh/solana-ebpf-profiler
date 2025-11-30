@@ -14,4 +14,17 @@ use which::which;
 fn main() {
     let bpf_linker = which("bpf-linker").unwrap();
     println!("cargo:rerun-if-changed={}", bpf_linker.to_str().unwrap());
+
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let arch = if arch == "bpf" {
+        std::env::var("HOST")
+            .unwrap()
+            .split('-')
+            .next()
+            .unwrap()
+            .to_string()
+    } else {
+        arch
+    };
+    println!("cargo:rustc-cfg=bpf_target_arch=\"{arch}\"");
 }

@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
+bs58 = { workspace = true }
+gimli = { workspace = true }
 inferno = { workspace = true }
 libc = { workspace = true }
 object = { workspace = true }
