@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod unwind;
 
 use aya::maps::{Array, RingBuf};
@@ -192,14 +193,14 @@ async fn main() -> anyhow::Result<()> {
             let uprobe: &mut UProbe =
                 ebpf.program_mut("program_enter").unwrap().try_into()?;
             uprobe.load()?;
-            uprobe.attach(&invoke_syms[0], vbin, pid_opt)?;
+            uprobe.attach(invoke_syms[0].as_str(), vbin, pid_opt)?;
             println!("attached uprobe to {}", invoke_syms[0]);
 
             // Attach program_exit_ok to program_success
             let exit_ok: &mut UProbe =
                 ebpf.program_mut("program_exit_ok").unwrap().try_into()?;
             exit_ok.load()?;
-            exit_ok.attach(&success_syms[0], vbin, pid_opt)?;
+            exit_ok.attach(success_syms[0].as_str(), vbin, pid_opt)?;
             println!("attached uprobe to {}", success_syms[0]);
 
             // Attach program_exit_err to all program_failure monomorphizations

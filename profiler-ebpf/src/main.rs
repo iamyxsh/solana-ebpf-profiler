@@ -168,7 +168,7 @@ pub fn profile_cpu(ctx: PerfEventContext) {
 
     #[cfg(bpf_target_arch = "x86_64")]
     let (pc, sp, fp, lr) = unsafe {
-        (data.regs.ip, data.regs.sp, data.regs.bp, 0u64)
+        (data.regs.rip, data.regs.rsp, data.regs.rbp, 0u64)
     };
 
     // Read current program state
