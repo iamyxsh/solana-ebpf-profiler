@@ -123,6 +123,32 @@ fn find_symbol(binary_path: &str, fragments: &[&str]) -> anyhow::Result<Vec<Stri
     Ok(matches)
 }
 
+/// Auto-detect a running agave-validator or solana-test-validator.
+/// Returns (pid, binary_path) if found.
+fn detect_validator() -> anyhow::Result<(u32, String)> {
+    let names = ["agave-validator", "solana-test-validator"];
+    for entry in fs::read_dir("/proc")?.flatten() {
+        let pid_str = entry.file_name();
+        let Ok(pid) = pid_str.to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(exe) = fs::read_link(format!("/proc/{}/exe", pid)) else {
+            continue;
+        };
+        let name = exe
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if names.iter().any(|n| name == *n) {
+            return Ok((pid, exe.to_string_lossy().to_string()));
+        }
+    }
+    anyhow::bail!(
+        "no running agave-validator or solana-test-validator found.\n\
+         start one, or pass --pid and --validator-binary manually."
+    )
+}
+
 fn format_program_id(id: &[u8; 32]) -> String {
     bs58::encode(id).into_string()
 }
@@ -134,13 +160,46 @@ fn is_zero(id: &[u8; 32]) -> bool {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let binary = get_arg(&args, "--binary");
-    let validator_binary = get_arg(&args, "--validator-binary");
-    let target_pid: u32 = get_arg(&args, "--pid")
-        .map(|s| s.parse().expect("--pid must be a number"))
-        .unwrap_or(0);
     let output = get_arg(&args, "--output").unwrap_or_else(|| "flamegraph.svg".to_string());
-    let output_dir = get_arg(&args, "--output-dir");
+    let mut output_dir = get_arg(&args, "--output-dir");
+
+    let pid_arg = get_arg(&args, "--pid");
+    let vbin_arg = get_arg(&args, "--validator-binary");
+    let bin_arg = get_arg(&args, "--binary");
+
+    // validator_pid is used for uprobe attachment (scoped to the validator process)
+    // target_pid is used for perf_event PID filtering (0 = all processes)
+    let (target_pid, validator_pid, validator_binary, binary) = match (&pid_arg, &vbin_arg) {
+        (None, None) => {
+            // Auto-detect: find validator, use PID for userspace filtering + uprobes
+            println!("no --pid or --validator-binary specified, auto-detecting...");
+            match detect_validator() {
+                Ok((pid, binary_path)) => {
+                    println!("detected validator: pid={}, binary={}", pid, binary_path);
+                    let bin = bin_arg.unwrap_or_else(|| binary_path.clone());
+                    (pid, Some(pid), Some(binary_path), Some(bin))
+                }
+                Err(e) => {
+                    eprintln!("auto-detection failed: {}", e);
+                    (0u32, None, None, bin_arg)
+                }
+            }
+        }
+        (Some(pid_str), Some(vbin)) => {
+            let pid: u32 = pid_str.parse().expect("--pid must be a number");
+            let bin = bin_arg.unwrap_or_else(|| vbin.clone());
+            (pid, Some(pid), Some(vbin.clone()), Some(bin))
+        }
+        (Some(pid_str), None) => {
+            let pid: u32 = pid_str.parse().expect("--pid must be a number");
+            (pid, None, None, bin_arg)
+        }
+        (None, Some(vbin)) => {
+            let vpid = detect_validator().map(|(p, _)| p).ok();
+            let bin = bin_arg.unwrap_or_else(|| vbin.clone());
+            (0, vpid, Some(vbin.clone()), Some(bin))
+        }
+    };
 
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
@@ -160,16 +219,19 @@ async fn main() -> anyhow::Result<()> {
         Array::try_from(ebpf.map_mut("TARGET_PID").unwrap())?;
     pid_map.set(0, target_pid, 0)?;
 
-    // Attach perf_event to all CPUs
+    // Attach perf_event
     let program: &mut PerfEvent = ebpf.program_mut("profile_cpu").unwrap().try_into()?;
     program.load()?;
 
     let cpus = aya::util::online_cpus().map_err(|(_, e)| e)?;
+    // Lower rate when PID-targeted to avoid ring buffer overflow
+    // (all events pass BPF, filtered in userspace)
+    let sample_period = if target_pid > 0 { 10_000_000 } else { 100_000 };
     for cpu in &cpus {
         program.attach(
             PerfEventConfig::Software(SoftwareEvent::CpuClock),
             PerfEventScope::AllProcessesOneCpu { cpu: *cpu },
-            SamplePolicy::Period(100_000),
+            SamplePolicy::Period(sample_period),
             true,
         )?;
     }
@@ -177,11 +239,7 @@ async fn main() -> anyhow::Result<()> {
     // Attach uprobes to validator binary if provided
     let mut has_program_ids = false;
     if let Some(ref vbin) = validator_binary {
-        let pid_opt = if target_pid > 0 {
-            Some(target_pid)
-        } else {
-            None
-        };
+        let pid_opt = validator_pid;
 
         // Strategy 1: Try stable_log::program_invoke for full per-program attribution
         let invoke_syms = find_symbol(vbin, &["program_invoke"])?;
@@ -217,6 +275,9 @@ async fn main() -> anyhow::Result<()> {
             }
 
             has_program_ids = true;
+            if output_dir.is_none() {
+                output_dir = Some("flamegraphs".to_string());
+            }
             println!("per-program attribution enabled via stable_log uprobes");
         } else {
             println!("stable_log symbols not found (may be inlined in release build)");
@@ -272,25 +333,49 @@ async fn main() -> anyhow::Result<()> {
     let mut sample_count: u64 = 0;
     let mut unwinder = DwarfUnwinder::new();
 
-    if target_pid > 0 {
-        println!("profiling pid {} on {} cores...", target_pid, cpus.len());
+    // Build set of thread IDs for the target process (for userspace filtering).
+    // bpf_get_current_pid_tgid() may return TID instead of TGID on some kernels.
+    let target_tids: std::collections::HashSet<u32> = if target_pid > 0 {
+        let mut tids = std::collections::HashSet::new();
+        tids.insert(target_pid);
+        let task_dir = format!("/proc/{}/task", target_pid);
+        if let Ok(entries) = fs::read_dir(&task_dir) {
+            for entry in entries.flatten() {
+                if let Ok(tid) = entry.file_name().to_string_lossy().parse::<u32>() {
+                    tids.insert(tid);
+                }
+            }
+        }
+        println!("profiling pid {} ({} threads) on {} cores...", target_pid, tids.len(), cpus.len());
+        tids
     } else {
         println!("profiling all processes on {} cores...", cpus.len());
-    }
+        std::collections::HashSet::new()
+    };
     println!("press Ctrl+C to stop and generate {}", output);
 
-    loop {
-        tokio::select! {
-            _ = signal::ctrl_c() => {
-                println!("detaching...");
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+    tokio::spawn(async move {
+        signal::ctrl_c().await.ok();
+        r.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    while running.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut guard = async_fd.readable_mut().await?;
+        let rb: &mut RingBuf<_> = guard.get_inner_mut();
+        let mut batch = 0u32;
+        while let Some(item) = rb.next() {
+            batch += 1;
+            if batch % 1000 == 0 && !running.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
             }
-            guard = async_fd.readable_mut() => {
-                let mut guard = guard?;
-                let rb: &mut RingBuf<_> = guard.get_inner_mut();
-                while let Some(item) = rb.next() {
                     if item.len() >= core::mem::size_of::<Event>() {
                         let event = unsafe { &*(item.as_ptr() as *const Event) };
+                        // Userspace PID/TID filter
+                        if !target_tids.is_empty() && !target_tids.contains(&event.pid) {
+                            continue;
+                        }
                         let maps = maps_cache
                             .entry(event.pid)
                             .or_insert_with(|| parse_maps(event.pid));
@@ -347,9 +432,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 guard.clear_ready();
-            }
-        }
     }
+    println!("detaching...");
 
     println!("collected {} samples", sample_count);
 

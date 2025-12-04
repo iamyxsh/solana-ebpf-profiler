@@ -158,7 +158,11 @@ impl DwarfUnwinder {
             };
 
             // Update FP if it was saved
-            let new_fp = match row.register(gimli::Register(29)) {
+            #[cfg(target_arch = "aarch64")]
+            let fp_reg = gimli::Register(29);
+            #[cfg(target_arch = "x86_64")]
+            let fp_reg = gimli::Register(6);
+            let new_fp = match row.register(fp_reg) {
                 RegisterRule::Offset(offset) => {
                     let addr = (cfa as i64 + offset) as u64;
                     read_u64(addr, stack, stack_base).unwrap_or(fp)
@@ -188,11 +192,20 @@ fn find_mapping<'a>(
 }
 
 fn reg_value(reg: gimli::Register, sp: u64, fp: u64, lr: u64) -> u64 {
+    #[cfg(target_arch = "aarch64")]
     match reg.0 {
-        29 => fp,
-        30 => lr,
-        31 => sp,
-        _ => 0,
+        29 => return fp,
+        30 => return lr,
+        31 => return sp,
+        _ => return 0,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    match reg.0 {
+        6 => return fp,   // rbp
+        7 => return sp,   // rsp
+        16 => return lr,  // rip / return address
+        _ => return 0,
     }
 }
 

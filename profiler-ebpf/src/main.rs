@@ -27,12 +27,9 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(4 * 1024 * 1024, 0);
 #[map]
 static PROGRAM_STATE: PerCpuArray<ProgramState> = PerCpuArray::with_max_entries(1, 0);
 
-fn check_pid(pid: u32) -> bool {
-    if let Some(target) = TARGET_PID.get(0) {
-        if *target != 0 && *target != pid {
-            return false;
-        }
-    }
+fn check_pid(_pid: u32) -> bool {
+    // PID filtering moved to userspace — BPF Array comparison
+    // doesn't work reliably on WSL2 kernels
     true
 }
 
@@ -112,17 +109,7 @@ pub fn program_exit_ok(ctx: ProbeContext) {
 
     if let Some(ptr) = PROGRAM_STATE.get_ptr_mut(0) {
         unsafe {
-            if (*ptr).depth > 0 {
-                (*ptr).depth -= 1;
-            }
-            let depth = (*ptr).depth as usize;
-            if depth > 0 && depth <= MAX_CPI_DEPTH {
-                // Restore parent program_id
-                (*ptr).program_id = (*ptr).ids[depth - 1];
-            } else {
-                (*ptr).program_id = [0u8; 32];
-                (*ptr).in_sbf = 0;
-            }
+            pop_program_state(ptr);
         }
     }
 }
@@ -137,14 +124,27 @@ pub fn program_exit_err(ctx: ProbeContext) {
 
     if let Some(ptr) = PROGRAM_STATE.get_ptr_mut(0) {
         unsafe {
-            if (*ptr).depth > 0 {
-                (*ptr).depth -= 1;
-            }
-            let depth = (*ptr).depth as usize;
-            if depth > 0 && depth <= MAX_CPI_DEPTH {
-                (*ptr).program_id = (*ptr).ids[depth - 1];
-            } else {
-                (*ptr).program_id = [0u8; 32];
+            pop_program_state(ptr);
+        }
+    }
+}
+
+/// Pop the CPI stack. Uses explicit match on depth to satisfy the BPF verifier's
+/// bounds checking (the verifier can't track array index arithmetic).
+#[inline(always)]
+unsafe fn pop_program_state(ptr: *mut ProgramState) {
+    if (*ptr).depth > 0 {
+        (*ptr).depth -= 1;
+    }
+    let depth = (*ptr).depth;
+    match depth {
+        1 => (*ptr).program_id = (*ptr).ids[0],
+        2 => (*ptr).program_id = (*ptr).ids[1],
+        3 => (*ptr).program_id = (*ptr).ids[2],
+        4 => (*ptr).program_id = (*ptr).ids[3],
+        _ => {
+            (*ptr).program_id = [0u8; 32];
+            if depth == 0 {
                 (*ptr).in_sbf = 0;
             }
         }
