@@ -13,7 +13,7 @@ unsafe fn call_bpf_probe_read_user(
     f(dst, size, src)
 }
 use aya_ebpf::macros::{map, perf_event, uprobe, uretprobe};
-use aya_ebpf::maps::{Array, PerCpuArray, RingBuf};
+use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::{PerfEventContext, ProbeContext, RetProbeContext};
 use aya_ebpf::EbpfContext;
 use profiler_common::{Event, ProgramState, STACK_DUMP_SIZE, MAX_CPI_DEPTH};
@@ -22,10 +22,14 @@ use profiler_common::{Event, ProgramState, STACK_DUMP_SIZE, MAX_CPI_DEPTH};
 static TARGET_PID: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
-static EVENTS: RingBuf = RingBuf::with_byte_size(4 * 1024 * 1024, 0);
+static EVENTS: RingBuf = RingBuf::with_byte_size(64 * 1024 * 1024, 0);
 
 #[map]
 static PROGRAM_STATE: PerCpuArray<ProgramState> = PerCpuArray::with_max_entries(1, 0);
+
+/// Counts invocations per program_id (uprobe-driven, not sampling-dependent)
+#[map]
+static INVOKE_COUNTS: HashMap<[u8; 32], u64> = HashMap::with_max_entries(256, 0);
 
 fn check_pid(_pid: u32) -> bool {
     // PID filtering moved to userspace — BPF Array comparison
@@ -89,8 +93,15 @@ pub fn program_enter(ctx: ProbeContext) {
                 let dst = core::ptr::addr_of_mut!((*ptr).ids[depth]) as *mut core::ffi::c_void;
                 let ret = call_bpf_probe_read_user(dst, 32, pubkey_ptr as *const core::ffi::c_void);
                 if ret == 0 {
-                    // Copy to current program_id for perf_event to read
                     (*ptr).program_id = (*ptr).ids[depth];
+                    // Count this invocation
+                    let key = (*ptr).ids[depth];
+                    if let Some(cnt) = INVOKE_COUNTS.get_ptr_mut(&key) {
+                        *cnt += 1;
+                    } else {
+                        let one: u64 = 1;
+                        let _ = INVOKE_COUNTS.insert(&key, &one, 0);
+                    }
                 }
             }
             (*ptr).depth = (depth + 1).min(MAX_CPI_DEPTH) as u32;
