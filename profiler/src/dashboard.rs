@@ -46,7 +46,7 @@ pub fn compute_stats(
     invoke_counts: &HashMap<[u8; 32], u64>,
     total_samples: u64,
     total_cycles: u64,
-    names: &HashMap<[u8; 32], &str>,
+    names: &HashMap<[u8; 32], String>,
     uptime_secs: u64,
     prev_cpu: &HashMap<String, f64>,
 ) -> DashboardState {

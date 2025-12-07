@@ -94,15 +94,57 @@ fn write_flamegraph(
 // Main
 // ---------------------------------------------------------------------------
 
+fn print_help() {
+    println!(
+        r#"solana-ebpf-profiler — eBPF-based per-program CPU profiler for Solana validators
+
+USAGE:
+    profiler [OPTIONS]
+
+OPTIONS:
+    --pid <PID>                Target process ID (auto-detected if omitted)
+    --validator-binary <PATH>  Path to agave-validator binary (auto-detected)
+    --binary <PATH>            Binary for symbol resolution
+    --duration <SECS>          Stop after N seconds
+    --period <N>               Perf sample period (default: 100000, lower = more samples)
+    --port <PORT>              Dashboard HTTP port (default: 3000)
+    --output <FILE>            Flamegraph output file (default: flamegraph.svg)
+    --output-dir <DIR>         Directory for per-program flamegraphs
+    --programs <FILE>          JSON file with program IDs and names (see programs.json)
+    --demo                     Run with simulated mainnet data (no sudo needed)
+    --help                     Print this help message
+
+PROGRAMS FILE FORMAT (--programs):
+    {{
+      "programs": [
+        {{ "pubkey": "base58...", "name": "Human Name" }},
+        ...
+      ]
+    }}
+
+EXAMPLES:
+    profiler                                      # auto-detect validator, profile until Ctrl+C
+    profiler --duration 60 --period 50000         # 60 seconds, aggressive sampling
+    profiler --programs my-programs.json          # custom program list
+    profiler --demo --port 8080                   # simulated demo on port 8080"#
+    );
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
 
     if args.iter().any(|a| a == "--demo") {
         let port: u16 = get_arg(&args, "--port")
             .and_then(|s| s.parse().ok())
             .unwrap_or(3000);
-        return demo::run_demo(port).await;
+        let programs_file = get_arg(&args, "--programs");
+        return demo::run_demo(port, programs_file.as_deref()).await;
     }
 
     let output = get_arg(&args, "--output").unwrap_or_else(|| "flamegraph.svg".to_string());
@@ -112,8 +154,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(3000);
     let duration: Option<u64> = get_arg(&args, "--duration").and_then(|s| s.parse().ok());
     let sample_period_arg: Option<u64> = get_arg(&args, "--period").and_then(|s| s.parse().ok());
+    let programs_file = get_arg(&args, "--programs");
 
-    let known_programs = build_known_programs();
+    let known_programs = build_known_programs(programs_file.as_deref());
 
     let pid_arg = get_arg(&args, "--pid");
     let vbin_arg = get_arg(&args, "--validator-binary");

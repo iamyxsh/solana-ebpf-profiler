@@ -1,0 +1,24 @@
+{
+  "programs": [
+    { "pubkey": "11111111111111111111111111111111", "name": "System Program" },
+    { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "name": "Token Program" },
+    { "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", "name": "Associated Token" },
+    { "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "name": "Token-2022" },
+    { "pubkey": "BPFLoaderUpgradeab1e11111111111111111111111", "name": "BPF Loader" },
+    { "pubkey": "BPFLoader2111111111111111111111111111111111", "name": "BPF Loader v2" },
+    { "pubkey": "ComputeBudget111111111111111111111111111111", "name": "Compute Budget" },
+    { "pubkey": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", "name": "Memo v2" },
+    { "pubkey": "Memo1UhkJBfCR1MNHSiotXyZdXFbczgWE7sXJdg3RX", "name": "Memo v1" },
+    { "pubkey": "AddressLookupTab1e1111111111111111111111111", "name": "Address Lookup Table" },
+    { "pubkey": "Vote111111111111111111111111111111111111111", "name": "Vote Program" },
+    { "pubkey": "Stake11111111111111111111111111111111111111", "name": "Stake Program" },
+    { "pubkey": "Config1111111111111111111111111111111111111", "name": "Config Program" },
+    { "pubkey": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", "name": "Raydium AMM v4" },
+    { "pubkey": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "name": "Jupiter v6" },
+    { "pubkey": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", "name": "Serum DEX v3" },
+    { "pubkey": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", "name": "Orca Whirlpool" },
+    { "pubkey": "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY", "name": "Phoenix DEX" },
+    { "pubkey": "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD", "name": "Marinade Finance" },
+    { "pubkey": "jCebN34bUfdeUhJEKZFbKbJMArDsmGN2a3sQecL4EGo", "name": "Jito Tip" }
+  ]
+}

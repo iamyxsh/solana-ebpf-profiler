@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
 
-pub async fn run_demo(port: u16) -> anyhow::Result<()> {
-    let known = build_known_programs();
+pub async fn run_demo(port: u16, programs_file: Option<&str>) -> anyhow::Result<()> {
+    let known = build_known_programs(programs_file);
 
     // Simulated mainnet program profiles (b58, base invocations/s, cpu_pct)
     let programs: Vec<(&str, f64, f64)> = vec![
