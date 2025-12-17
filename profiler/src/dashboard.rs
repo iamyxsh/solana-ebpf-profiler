@@ -43,6 +43,7 @@ pub fn new_shared_state() -> SharedState {
 
 pub fn compute_stats(
     per_program: &HashMap<[u8; 32], HashMap<String, u64>>,
+    per_program_samples: &HashMap<[u8; 32], u64>,
     invoke_counts: &HashMap<[u8; 32], u64>,
     total_samples: u64,
     total_cycles: u64,
@@ -54,7 +55,7 @@ pub fn compute_stats(
 
     for (id, stacks) in per_program {
         let cycles: u64 = stacks.values().sum();
-        let samples: u64 = stacks.values().count() as u64;
+        let samples: u64 = per_program_samples.get(id).copied().unwrap_or(0);
         let invocations = invoke_counts.get(id).copied().unwrap_or(0);
         all_programs.insert(*id, (cycles, samples, invocations));
     }
@@ -139,6 +140,14 @@ pub fn compute_stats(
     }
 }
 
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 pub fn stats_to_json(state: &DashboardState) -> String {
     let programs_json: Vec<String> = state
         .programs
@@ -146,7 +155,7 @@ pub fn stats_to_json(state: &DashboardState) -> String {
         .map(|p| {
             format!(
                 r#"{{"name":"{}","pubkey":"{}","samples":{},"cpu_pct":{:.2},"cycles":{},"invocations":{},"inv_per_sec":{:.1},"avg_cu":{:.0},"cpu_delta":{:.2}}}"#,
-                p.name, p.pubkey, p.samples, p.cpu_pct, p.cycles, p.invocations,
+                json_escape(&p.name), json_escape(&p.pubkey), p.samples, p.cpu_pct, p.cycles, p.invocations,
                 p.inv_per_sec, p.avg_cu_per_inv, p.cpu_pct_delta
             )
         })

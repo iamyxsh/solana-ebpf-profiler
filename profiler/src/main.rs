@@ -28,7 +28,7 @@ use symbols::{find_symbol, parse_maps, resolve_addr, SymbolResolver};
 fn get_arg(args: &[String], flag: &str) -> Option<String> {
     args.iter()
         .position(|a| a == flag)
-        .map(|i| args[i + 1].clone())
+        .and_then(|i| args.get(i + 1).cloned())
 }
 
 fn detect_validator() -> anyhow::Result<(u32, String)> {
@@ -309,6 +309,7 @@ async fn main() -> anyhow::Result<()> {
     let mut maps_cache: HashMap<u32, Vec<(u64, u64, u64, String)>> = HashMap::new();
     let mut folded: HashMap<String, u64> = HashMap::new();
     let mut per_program_folded: HashMap<[u8; 32], HashMap<String, u64>> = HashMap::new();
+    let mut per_program_samples: HashMap<[u8; 32], u64> = HashMap::new();
     let mut sample_count: u64 = 0;
     let mut total_cycles: u64 = 0;
     let mut unwinder = DwarfUnwinder::new();
@@ -388,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
                     let prev = { shared_state.lock().unwrap().prev_cpu.clone() };
                     let state = compute_stats(
                         &per_program_folded,
+                        &per_program_samples,
                         &ic,
                         sample_count,
                         total_cycles,
@@ -445,6 +447,7 @@ async fn main() -> anyhow::Result<()> {
                         let program_stacks =
                             per_program_folded.entry(event.program_id).or_default();
                         *program_stacks.entry(func_stack).or_insert(0) += event.cpu_cycles;
+                        *per_program_samples.entry(event.program_id).or_insert(0) += 1;
                     }
                 }
             }
@@ -457,6 +460,7 @@ async fn main() -> anyhow::Result<()> {
             let prev = { shared_state.lock().unwrap().prev_cpu.clone() };
             let state = compute_stats(
                 &per_program_folded,
+                &per_program_samples,
                 &ic,
                 sample_count,
                 total_cycles,
@@ -488,6 +492,7 @@ async fn main() -> anyhow::Result<()> {
         let prev = { shared_state.lock().unwrap().prev_cpu.clone() };
         let final_state = compute_stats(
             &per_program_folded,
+            &per_program_samples,
             &invoke_counts,
             sample_count,
             total_cycles,

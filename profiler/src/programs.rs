@@ -61,7 +61,11 @@ pub fn load_programs_from_json(path: &str) -> anyhow::Result<HashMap<[u8; 32], S
 
         if let Some(key) = b58_to_key(&pubkey) {
             let display_name = if name.is_empty() {
-                format!("{}...{}", &pubkey[..4], &pubkey[pubkey.len().saturating_sub(4)..])
+                if pubkey.len() >= 8 {
+                    format!("{}...{}", &pubkey[..4], &pubkey[pubkey.len() - 4..])
+                } else {
+                    pubkey.clone()
+                }
             } else {
                 name
             };
@@ -84,11 +88,12 @@ pub fn load_programs_from_json(path: &str) -> anyhow::Result<HashMap<[u8; 32], S
 /// Extract the string value after a "key": "value" pattern
 fn extract_string_value(s: &str) -> Option<String> {
     let colon = s.find(':')?;
-    let after_colon = &s[colon + 1..];
+    let after_colon = s.get(colon + 1..)?;
     let quote_start = after_colon.find('"')?;
     let value_start = quote_start + 1;
-    let quote_end = after_colon[value_start..].find('"')?;
-    Some(after_colon[value_start..value_start + quote_end].to_string())
+    let rest = after_colon.get(value_start..)?;
+    let quote_end = rest.find('"')?;
+    Some(rest[..quote_end].to_string())
 }
 
 pub fn build_known_programs(programs_file: Option<&str>) -> HashMap<[u8; 32], String> {
