@@ -44,9 +44,9 @@ pub async fn run_demo(port: u16, programs_file: Option<&str>) -> anyhow::Result<
     while running.load(Ordering::Relaxed) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let elapsed = start.elapsed().as_secs();
-        let jitter = || 0.85 + (elapsed % 7) as f64 * 0.05;
+        let jitter = 0.85 + (elapsed % 7) as f64 * 0.05;
 
-        let total_samples = (elapsed as f64 * 160.0 * jitter()) as u64;
+        let total_samples = (elapsed as f64 * 160.0 * jitter) as u64;
         let total_cycles = total_samples * 100_000;
         let elapsed_f = if elapsed > 0 { elapsed as f64 } else { 1.0 };
 
@@ -58,10 +58,10 @@ pub async fn run_demo(port: u16, programs_file: Option<&str>) -> anyhow::Result<
                 let bytes = bs58::decode(b58).into_vec().unwrap();
                 let mut key = [0u8; 32];
                 key.copy_from_slice(&bytes);
-                let invocations = (elapsed as f64 * base_inv * jitter()) as u64;
+                let invocations = (elapsed as f64 * base_inv * jitter) as u64;
                 let samples = (total_samples as f64 * cpu / 100.0) as u64;
                 let name = display_program(&key, &known);
-                let cpu_pct = *cpu * jitter() / jitter();
+                let cpu_pct = *cpu * jitter;
                 let cpu_pct_delta = cpu_pct - prev_cpu.get(&name).copied().unwrap_or(cpu_pct);
                 ProgramStat {
                     name,

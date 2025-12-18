@@ -29,7 +29,7 @@ static PROGRAM_STATE: PerCpuArray<ProgramState> = PerCpuArray::with_max_entries(
 
 /// Counts invocations per program_id (uprobe-driven, not sampling-dependent)
 #[map]
-static INVOKE_COUNTS: HashMap<[u8; 32], u64> = HashMap::with_max_entries(256, 0);
+static INVOKE_COUNTS: HashMap<[u8; 32], u64> = HashMap::with_max_entries(4096, 0);
 
 fn check_pid(_pid: u32) -> bool {
     // PID filtering moved to userspace — BPF Array comparison
@@ -153,6 +153,7 @@ unsafe fn pop_program_state(ptr: *mut ProgramState) {
         2 => (*ptr).program_id = (*ptr).ids[1],
         3 => (*ptr).program_id = (*ptr).ids[2],
         4 => (*ptr).program_id = (*ptr).ids[3],
+        5 => (*ptr).program_id = (*ptr).ids[4],
         _ => {
             (*ptr).program_id = [0u8; 32];
             if depth == 0 {

@@ -172,8 +172,7 @@ async fn main() -> anyhow::Result<()> {
                     (pid, Some(pid), Some(binary_path), Some(bin))
                 }
                 Err(e) => {
-                    eprintln!("auto-detection failed: {}", e);
-                    (0u32, None, None, bin_arg)
+                    anyhow::bail!("auto-detection failed: {}.\nStart a validator or pass --pid manually.", e);
                 }
             }
         }
@@ -353,9 +352,12 @@ async fn main() -> anyhow::Result<()> {
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let shutdown_tx = shutdown.clone();
     tokio::spawn(async move {
         signal::ctrl_c().await.ok();
         r.store(false, Ordering::Relaxed);
+        shutdown_tx.notify_one();
     });
 
     let start = std::time::Instant::now();
@@ -368,7 +370,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        let mut guard = async_fd.readable_mut().await?;
+        let mut guard = tokio::select! {
+            g = async_fd.readable_mut() => g?,
+            _ = shutdown.notified() => break,
+        };
         let rb: &mut RingBuf<_> = guard.get_inner_mut();
         let mut batch = 0u32;
         while let Some(item) = rb.next() {
