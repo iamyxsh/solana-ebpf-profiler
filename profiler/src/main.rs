@@ -306,6 +306,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut maps_cache: HashMap<u32, Vec<(u64, u64, u64, String)>> = HashMap::new();
+    let mut addr_cache: HashMap<u64, String> = HashMap::new();
     let mut folded: HashMap<String, u64> = HashMap::new();
     let mut per_program_folded: HashMap<[u8; 32], HashMap<String, u64>> = HashMap::new();
     let mut per_program_samples: HashMap<[u8; 32], u64> = HashMap::new();
@@ -429,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
                     let names: Vec<String> = addrs
                         .iter()
                         .rev()
-                        .map(|a| resolve_addr(*a, maps, &resolvers))
+                        .map(|a| resolve_addr(*a, maps, &resolvers, &mut addr_cache))
                         .collect();
                     let func_stack = names.join(";");
 

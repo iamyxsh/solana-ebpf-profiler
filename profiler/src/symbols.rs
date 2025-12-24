@@ -27,6 +27,9 @@ impl SymbolResolver {
     }
 
     pub fn resolve(&self, addr: u64) -> &str {
+        if self.symbols.is_empty() {
+            return "??";
+        }
         match self.symbols.binary_search_by_key(&addr, |s| s.0) {
             Ok(i) => &self.symbols[i].2,
             Err(i) if i > 0 => {
@@ -65,6 +68,20 @@ pub fn parse_maps(pid: u32) -> Vec<(u64, u64, u64, String)> {
 }
 
 pub fn resolve_addr(
+    addr: u64,
+    maps: &[(u64, u64, u64, String)],
+    resolvers: &HashMap<String, SymbolResolver>,
+    cache: &mut HashMap<u64, String>,
+) -> String {
+    if let Some(cached) = cache.get(&addr) {
+        return cached.clone();
+    }
+    let result = resolve_addr_uncached(addr, maps, resolvers);
+    cache.insert(addr, result.clone());
+    result
+}
+
+fn resolve_addr_uncached(
     addr: u64,
     maps: &[(u64, u64, u64, String)],
     resolvers: &HashMap<String, SymbolResolver>,

@@ -66,8 +66,8 @@ pub fn compute_stats(
 
     let total_invocations: u64 = invoke_counts.values().sum();
     let elapsed = if uptime_secs > 0 { uptime_secs as f64 } else { 1.0 };
-    let tps = total_invocations as f64 / elapsed;
-    let samples_per_sec = total_samples as f64 / elapsed;
+    let tps = if uptime_secs > 0 { total_invocations as f64 / elapsed } else { 0.0 };
+    let samples_per_sec = if uptime_secs > 0 { total_samples as f64 / elapsed } else { 0.0 };
 
     let mut programs: Vec<ProgramStat> = all_programs
         .iter()
@@ -78,7 +78,7 @@ pub fn compute_stats(
                 0.0
             };
             let name = display_program(id, names);
-            let inv_per_sec = *invocations as f64 / elapsed;
+            let inv_per_sec = if uptime_secs > 0 { *invocations as f64 / elapsed } else { 0.0 };
             let avg_cu_per_inv = if *invocations > 0 {
                 *cycles as f64 / *invocations as f64
             } else {

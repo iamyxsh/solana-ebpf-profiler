@@ -46,8 +46,8 @@ pub async fn run_demo(port: u16, programs_file: Option<&str>) -> anyhow::Result<
         let elapsed = start.elapsed().as_secs();
         let jitter = 0.85 + (elapsed % 7) as f64 * 0.05;
 
-        let total_samples = (elapsed as f64 * 160.0 * jitter) as u64;
-        let total_cycles = total_samples * 100_000;
+        let total_samples = (elapsed as f64 * 160.0 * jitter).min(u64::MAX as f64) as u64;
+        let total_cycles = total_samples.saturating_mul(100_000);
         let elapsed_f = if elapsed > 0 { elapsed as f64 } else { 1.0 };
 
         let prev_cpu = { state.lock().unwrap().prev_cpu.clone() };

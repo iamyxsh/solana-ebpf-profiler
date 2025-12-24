@@ -56,6 +56,7 @@ pub fn load_programs_from_json(path: &str) -> anyhow::Result<HashMap<[u8; 32], S
         let name = if let Some(name_start) = content[start..block_end].find("\"name\"") {
             extract_string_value(&content[start + name_start..]).unwrap_or_default()
         } else {
+            eprintln!("warning: missing \"name\" field for pubkey {}", pubkey);
             String::new()
         };
 
