@@ -55,9 +55,11 @@ pub async fn run_demo(port: u16, programs_file: Option<&str>) -> anyhow::Result<
         let mut stats: Vec<ProgramStat> = programs
             .iter()
             .map(|(b58, base_inv, cpu)| {
-                let bytes = bs58::decode(b58).into_vec().unwrap();
+                let bytes = bs58::decode(b58).into_vec().unwrap_or_default();
                 let mut key = [0u8; 32];
-                key.copy_from_slice(&bytes);
+                if bytes.len() == 32 {
+                    key.copy_from_slice(&bytes);
+                }
                 let invocations = (elapsed as f64 * base_inv * jitter) as u64;
                 let samples = (total_samples as f64 * cpu / 100.0) as u64;
                 let name = display_program(&key, &known);

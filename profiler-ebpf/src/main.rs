@@ -39,7 +39,7 @@ fn check_pid(_pid: u32) -> bool {
 
 // vm::execute entry — marks "in sBPF execution"
 #[uprobe]
-pub fn vm_entry(ctx: ProbeContext) {
+pub fn vm_entry(_ctx: ProbeContext) {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     if !check_pid(pid) {
         return;
@@ -54,7 +54,7 @@ pub fn vm_entry(ctx: ProbeContext) {
 
 // vm::execute exit — clears "in sBPF execution"
 #[uretprobe]
-pub fn vm_exit(ctx: RetProbeContext) {
+pub fn vm_exit(_ctx: RetProbeContext) {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     if !check_pid(pid) {
         return;
@@ -112,7 +112,7 @@ pub fn program_enter(ctx: ProbeContext) {
 
 // stable_log::program_success — pop CPI stack
 #[uprobe]
-pub fn program_exit_ok(ctx: ProbeContext) {
+pub fn program_exit_ok(_ctx: ProbeContext) {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     if !check_pid(pid) {
         return;
@@ -127,7 +127,7 @@ pub fn program_exit_ok(ctx: ProbeContext) {
 
 // stable_log::program_failure — same as program_exit_ok
 #[uprobe]
-pub fn program_exit_err(ctx: ProbeContext) {
+pub fn program_exit_err(_ctx: ProbeContext) {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     if !check_pid(pid) {
         return;
