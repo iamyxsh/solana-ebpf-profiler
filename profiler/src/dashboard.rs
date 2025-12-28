@@ -221,6 +221,275 @@ pub async fn run_http_server(port: u16, state: SharedState) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_stat(name: &str, pubkey: &str, samples: u64, cpu_pct: f64, invocations: u64) -> ProgramStat {
+        ProgramStat {
+            name: name.to_string(),
+            pubkey: pubkey.to_string(),
+            samples,
+            cpu_pct,
+            cycles: samples * 100_000,
+            invocations,
+            inv_per_sec: invocations as f64 / 10.0,
+            avg_cu_per_inv: if invocations > 0 { (samples * 100_000) as f64 / invocations as f64 } else { 0.0 },
+            cpu_pct_delta: 0.0,
+        }
+    }
+
+    // --- json_escape ---
+
+    #[test]
+    fn json_escape_plain_string() {
+        assert_eq!(json_escape("hello"), "hello");
+    }
+
+    #[test]
+    fn json_escape_quotes() {
+        assert_eq!(json_escape(r#"say "hi""#), r#"say \"hi\""#);
+    }
+
+    #[test]
+    fn json_escape_backslash() {
+        assert_eq!(json_escape(r"path\to"), r"path\\to");
+    }
+
+    #[test]
+    fn json_escape_newline_tab() {
+        assert_eq!(json_escape("a\nb\tc"), r"a\nb\tc");
+    }
+
+    #[test]
+    fn json_escape_carriage_return() {
+        assert_eq!(json_escape("a\rb"), r"a\rb");
+    }
+
+    #[test]
+    fn json_escape_combined() {
+        assert_eq!(json_escape("a\"b\\c\nd"), r#"a\"b\\c\nd"#);
+    }
+
+    #[test]
+    fn json_escape_empty() {
+        assert_eq!(json_escape(""), "");
+    }
+
+    // --- stats_to_json ---
+
+    #[test]
+    fn stats_to_json_empty_programs() {
+        let state = DashboardState {
+            programs: vec![],
+            total_samples: 0,
+            total_invocations: 0,
+            uptime_secs: 0,
+            samples_per_sec: 0.0,
+            tps: 0.0,
+            prev_cpu: HashMap::new(),
+        };
+        let json = stats_to_json(&state);
+        assert!(json.contains("\"programs\":[]"));
+        assert!(json.contains("\"total_samples\":0"));
+    }
+
+    #[test]
+    fn stats_to_json_with_programs() {
+        let state = DashboardState {
+            programs: vec![make_stat("Jupiter v6", "JUP6Lkb", 1000, 18.5, 5000)],
+            total_samples: 5000,
+            total_invocations: 5000,
+            uptime_secs: 60,
+            samples_per_sec: 83.3,
+            tps: 83.3,
+            prev_cpu: HashMap::new(),
+        };
+        let json = stats_to_json(&state);
+        assert!(json.contains("\"name\":\"Jupiter v6\""));
+        assert!(json.contains("\"total_samples\":5000"));
+        assert!(json.contains("\"uptime_secs\":60"));
+    }
+
+    #[test]
+    fn stats_to_json_escapes_special_chars() {
+        let state = DashboardState {
+            programs: vec![make_stat("Prog \"A\"", "key\\1", 10, 1.0, 5)],
+            total_samples: 10,
+            total_invocations: 5,
+            uptime_secs: 1,
+            samples_per_sec: 10.0,
+            tps: 5.0,
+            prev_cpu: HashMap::new(),
+        };
+        let json = stats_to_json(&state);
+        assert!(json.contains(r#"\"A\""#));
+        assert!(json.contains(r#"key\\1"#));
+    }
+
+    #[test]
+    fn stats_to_json_is_valid_json() {
+        let state = DashboardState {
+            programs: vec![
+                make_stat("System", "111", 500, 5.3, 2400),
+                make_stat("[validator]", "\u{2014}", 3000, 37.1, 0),
+            ],
+            total_samples: 3500,
+            total_invocations: 2400,
+            uptime_secs: 30,
+            samples_per_sec: 116.7,
+            tps: 80.0,
+            prev_cpu: HashMap::new(),
+        };
+        let json = stats_to_json(&state);
+        // Basic structural validation
+        assert!(json.starts_with('{'));
+        assert!(json.ends_with('}'));
+        assert!(json.contains("\"programs\":["));
+        // Count opening/closing braces match
+        let opens: usize = json.chars().filter(|c| *c == '{').count();
+        let closes: usize = json.chars().filter(|c| *c == '}').count();
+        assert_eq!(opens, closes);
+    }
+
+    // --- compute_stats ---
+
+    #[test]
+    fn compute_stats_empty() {
+        let state = compute_stats(
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            0, 0,
+            &HashMap::new(),
+            0,
+            &HashMap::new(),
+        );
+        assert_eq!(state.programs.len(), 0);
+        assert_eq!(state.total_samples, 0);
+    }
+
+    #[test]
+    fn compute_stats_single_program() {
+        let mut per_program = HashMap::new();
+        let key = [1u8; 32];
+        let mut stacks = HashMap::new();
+        stacks.insert("main;func".to_string(), 500u64);
+        per_program.insert(key, stacks);
+
+        let mut per_program_samples = HashMap::new();
+        per_program_samples.insert(key, 10u64);
+
+        let mut invoke_counts = HashMap::new();
+        invoke_counts.insert(key, 100u64);
+
+        let mut names = HashMap::new();
+        names.insert(key, "Test Program".to_string());
+
+        let state = compute_stats(
+            &per_program,
+            &per_program_samples,
+            &invoke_counts,
+            100, 1000,
+            &names,
+            60,
+            &HashMap::new(),
+        );
+        // 1 program + [validator] overhead
+        assert_eq!(state.programs.len(), 2);
+        assert_eq!(state.programs[0].name, "Test Program");
+        assert_eq!(state.programs[0].invocations, 100);
+        assert_eq!(state.programs[0].samples, 10);
+        assert_eq!(state.programs[1].name, "[validator]");
+    }
+
+    #[test]
+    fn compute_stats_cpu_pct_sums_near_100() {
+        let mut per_program = HashMap::new();
+        let k1 = [1u8; 32];
+        let k2 = [2u8; 32];
+        let mut s1 = HashMap::new();
+        s1.insert("a".to_string(), 300u64);
+        let mut s2 = HashMap::new();
+        s2.insert("b".to_string(), 700u64);
+        per_program.insert(k1, s1);
+        per_program.insert(k2, s2);
+
+        let mut samples = HashMap::new();
+        samples.insert(k1, 30u64);
+        samples.insert(k2, 70u64);
+
+        let state = compute_stats(
+            &per_program,
+            &samples,
+            &HashMap::new(),
+            100, 1000,
+            &HashMap::new(),
+            10,
+            &HashMap::new(),
+        );
+        let total_pct: f64 = state.programs.iter().map(|p| p.cpu_pct).sum();
+        assert!((total_pct - 100.0).abs() < 0.1, "total cpu should be ~100%, got {}", total_pct);
+    }
+
+    #[test]
+    fn compute_stats_invoke_only_programs_appear() {
+        // A program with invoke counts but no perf samples should still appear
+        let mut invoke_counts = HashMap::new();
+        let key = [3u8; 32];
+        invoke_counts.insert(key, 500u64);
+
+        let state = compute_stats(
+            &HashMap::new(),
+            &HashMap::new(),
+            &invoke_counts,
+            100, 1000,
+            &HashMap::new(),
+            10,
+            &HashMap::new(),
+        );
+        // Should have the program + validator
+        assert!(state.programs.iter().any(|p| p.invocations == 500));
+    }
+
+    // --- new_shared_state ---
+
+    #[test]
+    fn new_shared_state_initializes_empty() {
+        let state = new_shared_state();
+        let s = state.lock().unwrap();
+        assert_eq!(s.programs.len(), 0);
+        assert_eq!(s.total_samples, 0);
+        assert_eq!(s.uptime_secs, 0);
+    }
+
+    // --- DashboardState prev_cpu tracking ---
+
+    #[test]
+    fn compute_stats_tracks_prev_cpu() {
+        let mut per_program = HashMap::new();
+        let key = [1u8; 32];
+        let mut stacks = HashMap::new();
+        stacks.insert("f".to_string(), 500u64);
+        per_program.insert(key, stacks);
+
+        let mut names = HashMap::new();
+        names.insert(key, "Prog".to_string());
+
+        let state = compute_stats(
+            &per_program,
+            &HashMap::new(),
+            &HashMap::new(),
+            100, 1000,
+            &names,
+            10,
+            &HashMap::new(),
+        );
+        assert!(state.prev_cpu.contains_key("Prog"));
+        assert!(state.prev_cpu.contains_key("[validator]"));
+    }
+}
+
 pub const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>

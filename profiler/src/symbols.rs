@@ -117,3 +117,136 @@ pub fn find_symbol(binary_path: &str, fragments: &[&str]) -> anyhow::Result<Vec<
     }
     Ok(matches)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_resolver(syms: Vec<(u64, u64, &str)>) -> SymbolResolver {
+        let mut symbols: Vec<(u64, u64, String)> = syms
+            .into_iter()
+            .map(|(addr, size, name)| (addr, size, name.to_string()))
+            .collect();
+        symbols.sort_by_key(|s| s.0);
+        SymbolResolver { symbols }
+    }
+
+    // --- SymbolResolver::resolve ---
+
+    #[test]
+    fn resolve_exact_match() {
+        let r = make_resolver(vec![(0x1000, 100, "main"), (0x2000, 50, "helper")]);
+        assert_eq!(r.resolve(0x1000), "main");
+        assert_eq!(r.resolve(0x2000), "helper");
+    }
+
+    #[test]
+    fn resolve_within_symbol_range() {
+        let r = make_resolver(vec![(0x1000, 100, "main")]);
+        assert_eq!(r.resolve(0x1050), "main");
+        assert_eq!(r.resolve(0x1063), "main"); // 0x1000 + 99 = 0x1063
+    }
+
+    #[test]
+    fn resolve_outside_symbol_range() {
+        let r = make_resolver(vec![(0x1000, 100, "main")]);
+        assert_eq!(r.resolve(0x1064), "??"); // one past end
+        assert_eq!(r.resolve(0x5000), "??");
+    }
+
+    #[test]
+    fn resolve_before_first_symbol() {
+        let r = make_resolver(vec![(0x1000, 100, "main")]);
+        assert_eq!(r.resolve(0x500), "??");
+    }
+
+    #[test]
+    fn resolve_empty_resolver() {
+        let r = make_resolver(vec![]);
+        assert_eq!(r.resolve(0x1000), "??");
+    }
+
+    #[test]
+    fn resolve_between_symbols() {
+        let r = make_resolver(vec![(0x1000, 10, "a"), (0x2000, 10, "b")]);
+        assert_eq!(r.resolve(0x100A), "??"); // past "a", before "b"
+        assert_eq!(r.resolve(0x1500), "??");
+    }
+
+    #[test]
+    fn resolve_adjacent_symbols() {
+        let r = make_resolver(vec![(0x1000, 0x100, "a"), (0x1100, 0x100, "b")]);
+        assert_eq!(r.resolve(0x10FF), "a");
+        assert_eq!(r.resolve(0x1100), "b");
+    }
+
+    // --- resolve_addr / resolve_addr_uncached ---
+
+    #[test]
+    fn resolve_addr_with_map_hit() {
+        let resolver = make_resolver(vec![(0x5000, 100, "my_func")]);
+        let mut resolvers = HashMap::new();
+        resolvers.insert("/usr/bin/test".to_string(), resolver);
+        let maps = vec![(0x400000u64, 0x500000u64, 0x0u64, "/usr/bin/test".to_string())];
+        let mut cache = HashMap::new();
+        // addr 0x405000 maps to file offset: 0x405000 - 0x400000 + 0 = 0x5000
+        let result = resolve_addr(0x405000, &maps, &resolvers, &mut cache);
+        assert_eq!(result, "my_func");
+    }
+
+    #[test]
+    fn resolve_addr_caches_result() {
+        let resolver = make_resolver(vec![(0x5000, 100, "cached_fn")]);
+        let mut resolvers = HashMap::new();
+        resolvers.insert("/bin/x".to_string(), resolver);
+        let maps = vec![(0x400000u64, 0x500000u64, 0x0u64, "/bin/x".to_string())];
+        let mut cache = HashMap::new();
+        let r1 = resolve_addr(0x405000, &maps, &resolvers, &mut cache);
+        assert_eq!(r1, "cached_fn");
+        assert!(cache.contains_key(&0x405000));
+        // Second call should hit cache
+        let r2 = resolve_addr(0x405000, &maps, &resolvers, &mut cache);
+        assert_eq!(r2, "cached_fn");
+    }
+
+    #[test]
+    fn resolve_addr_no_matching_map() {
+        let maps: Vec<(u64, u64, u64, String)> = vec![];
+        let mut cache = HashMap::new();
+        let result = resolve_addr(0xDEAD, &maps, &HashMap::new(), &mut cache);
+        assert_eq!(result, "0xdead");
+    }
+
+    #[test]
+    fn resolve_addr_map_hit_but_no_resolver() {
+        let maps = vec![(0x1000u64, 0x2000u64, 0x0u64, "/lib/unknown.so".to_string())];
+        let mut cache = HashMap::new();
+        let result = resolve_addr(0x1500, &maps, &HashMap::new(), &mut cache);
+        assert_eq!(result, "/lib/unknown.so+0x500");
+    }
+
+    #[test]
+    fn resolve_addr_map_hit_symbol_miss() {
+        let resolver = make_resolver(vec![(0x100, 10, "other_fn")]);
+        let mut resolvers = HashMap::new();
+        resolvers.insert("/bin/app".to_string(), resolver);
+        let maps = vec![(0x1000u64, 0x2000u64, 0x0u64, "/bin/app".to_string())];
+        let mut cache = HashMap::new();
+        // offset = 0x1800 - 0x1000 = 0x800, no symbol at 0x800
+        let result = resolve_addr(0x1800, &maps, &resolvers, &mut cache);
+        assert_eq!(result, "/bin/app+0x800");
+    }
+
+    #[test]
+    fn resolve_addr_with_offset() {
+        let resolver = make_resolver(vec![(0x1000, 100, "offset_fn")]);
+        let mut resolvers = HashMap::new();
+        resolvers.insert("/bin/y".to_string(), resolver);
+        // map has offset 0x500, so file_offset = addr - start + offset
+        let maps = vec![(0x400000u64, 0x500000u64, 0x500u64, "/bin/y".to_string())];
+        let mut cache = HashMap::new();
+        // file_offset = 0x400B00 - 0x400000 + 0x500 = 0x1000
+        let result = resolve_addr(0x400B00, &maps, &resolvers, &mut cache);
+        assert_eq!(result, "offset_fn");
+    }
+}

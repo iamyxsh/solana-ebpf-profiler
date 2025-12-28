@@ -555,3 +555,43 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_arg_present() {
+        let args: Vec<String> = vec!["profiler", "--port", "3000", "--duration", "60"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(get_arg(&args, "--port"), Some("3000".to_string()));
+        assert_eq!(get_arg(&args, "--duration"), Some("60".to_string()));
+    }
+
+    #[test]
+    fn get_arg_missing() {
+        let args: Vec<String> = vec!["profiler", "--port", "3000"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(get_arg(&args, "--duration"), None);
+    }
+
+    #[test]
+    fn get_arg_flag_at_end_no_value() {
+        let args: Vec<String> = vec!["profiler", "--port"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(get_arg(&args, "--port"), None);
+    }
+
+    #[test]
+    fn get_arg_empty_args() {
+        let args: Vec<String> = vec![];
+        assert_eq!(get_arg(&args, "--port"), None);
+    }
+
+    #[test]
+    fn get_arg_returns_first_match() {
+        let args: Vec<String> = vec!["profiler", "--port", "3000", "--port", "4000"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(get_arg(&args, "--port"), Some("3000".to_string()));
+    }
+}

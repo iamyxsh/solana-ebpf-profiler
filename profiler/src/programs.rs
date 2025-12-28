@@ -138,3 +138,190 @@ pub fn slug_program(id: &[u8; 32], names: &HashMap<[u8; 32], String>) -> String 
 pub fn is_zero(id: &[u8; 32]) -> bool {
     id.iter().all(|b| *b == 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn b58_to_key_system_program() {
+        let key = b58_to_key("11111111111111111111111111111111").unwrap();
+        assert_eq!(key, [0u8; 32]);
+    }
+
+    #[test]
+    fn b58_to_key_invalid_returns_none() {
+        assert!(b58_to_key("not-valid-base58!!!").is_none());
+    }
+
+    #[test]
+    fn b58_to_key_wrong_length_returns_none() {
+        assert!(b58_to_key("1111").is_none());
+    }
+
+    #[test]
+    fn b58_to_key_empty_returns_none() {
+        assert!(b58_to_key("").is_none());
+    }
+
+    #[test]
+    fn extract_string_value_basic() {
+        let s = r#""pubkey": "abc123""#;
+        assert_eq!(extract_string_value(s), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn extract_string_value_with_spaces() {
+        let s = r#""name" : "Jupiter v6""#;
+        assert_eq!(extract_string_value(s), Some("Jupiter v6".to_string()));
+    }
+
+    #[test]
+    fn extract_string_value_no_colon() {
+        assert_eq!(extract_string_value("no colon here"), None);
+    }
+
+    #[test]
+    fn extract_string_value_no_quotes() {
+        assert_eq!(extract_string_value(r#""key": no_quotes"#), None);
+    }
+
+    #[test]
+    fn extract_string_value_empty_value() {
+        let s = r#""key": """#;
+        assert_eq!(extract_string_value(s), Some("".to_string()));
+    }
+
+    #[test]
+    fn default_programs_all_valid_keys() {
+        for (b58, name) in default_programs() {
+            assert!(b58_to_key(b58).is_some(), "invalid key for {}", name);
+        }
+    }
+
+    #[test]
+    fn default_programs_contains_system_program() {
+        let progs = default_programs();
+        assert!(progs.iter().any(|(_, name)| *name == "System Program"));
+    }
+
+    #[test]
+    fn build_known_programs_no_file_returns_defaults() {
+        let map = build_known_programs(None);
+        assert!(!map.is_empty());
+        let system_key = b58_to_key("11111111111111111111111111111111").unwrap();
+        assert_eq!(map.get(&system_key), Some(&"System Program".to_string()));
+    }
+
+    #[test]
+    fn build_known_programs_bad_file_falls_back() {
+        let map = build_known_programs(Some("/tmp/nonexistent_file_12345.json"));
+        assert!(!map.is_empty()); // falls back to defaults
+    }
+
+    #[test]
+    fn load_programs_from_json_valid() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{ "programs": [
+            {{ "pubkey": "11111111111111111111111111111111", "name": "Test Program" }}
+        ] }}"#).unwrap();
+        let map = load_programs_from_json(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 1);
+        let key = b58_to_key("11111111111111111111111111111111").unwrap();
+        assert_eq!(map.get(&key), Some(&"Test Program".to_string()));
+    }
+
+    #[test]
+    fn load_programs_from_json_multiple() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{ "programs": [
+            {{ "pubkey": "11111111111111111111111111111111", "name": "System" }},
+            {{ "pubkey": "Vote111111111111111111111111111111111111111", "name": "Vote" }}
+        ] }}"#).unwrap();
+        let map = load_programs_from_json(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn load_programs_from_json_missing_name_uses_truncated_key() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{ "programs": [
+            {{ "pubkey": "11111111111111111111111111111111" }}
+        ] }}"#).unwrap();
+        let map = load_programs_from_json(tmp.path().to_str().unwrap()).unwrap();
+        let key = b58_to_key("11111111111111111111111111111111").unwrap();
+        let name = map.get(&key).unwrap();
+        assert!(name.contains("..."), "expected truncated key, got: {}", name);
+    }
+
+    #[test]
+    fn load_programs_from_json_empty_file_errors() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        assert!(load_programs_from_json(tmp.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn load_programs_from_json_invalid_b58_skipped() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{ "programs": [
+            {{ "pubkey": "INVALIDBASE58!!!", "name": "Bad" }},
+            {{ "pubkey": "11111111111111111111111111111111", "name": "Good" }}
+        ] }}"#).unwrap();
+        let map = load_programs_from_json(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn display_program_known() {
+        let mut names = HashMap::new();
+        let key = b58_to_key("11111111111111111111111111111111").unwrap();
+        names.insert(key, "System Program".to_string());
+        assert_eq!(display_program(&key, &names), "System Program");
+    }
+
+    #[test]
+    fn display_program_unknown_truncates() {
+        let names: HashMap<[u8; 32], String> = HashMap::new();
+        let key = b58_to_key("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
+        let result = display_program(&key, &names);
+        assert!(result.contains("..."));
+        assert!(result.len() < 44); // shorter than full b58
+    }
+
+    #[test]
+    fn slug_program_known() {
+        let mut names = HashMap::new();
+        let key = [1u8; 32];
+        names.insert(key, "Jupiter v6".to_string());
+        assert_eq!(slug_program(&key, &names), "jupiter-v6");
+    }
+
+    #[test]
+    fn slug_program_unknown_full_b58() {
+        let names: HashMap<[u8; 32], String> = HashMap::new();
+        let key = b58_to_key("11111111111111111111111111111111").unwrap();
+        let result = slug_program(&key, &names);
+        assert_eq!(result, "11111111111111111111111111111111");
+    }
+
+    #[test]
+    fn is_zero_all_zeros() {
+        assert!(is_zero(&[0u8; 32]));
+    }
+
+    #[test]
+    fn is_zero_not_zero() {
+        let mut key = [0u8; 32];
+        key[31] = 1;
+        assert!(!is_zero(&key));
+    }
+
+    #[test]
+    fn b58_roundtrip() {
+        let b58 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        let key = b58_to_key(b58).unwrap();
+        let roundtrip = bs58::encode(key).into_string();
+        assert_eq!(roundtrip, b58);
+    }
+}
